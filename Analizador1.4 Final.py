@@ -1,10 +1,8 @@
 import re
-from lark import Lark, Transformer, Tree
+from lark import Lark, UnexpectedInput
+from lark.tree import pydot__tree_to_png
 
-# -----------------------
-# ANALIZADOR LÉXICO
-# -----------------------
-
+# -------------------- Definición de Tokens --------------------
 TOKENS = {
     'PALABRA_RESERVADA': r'\b(if|else|for|print|int|b|f|h|j|k)\b',
     'IDENTIFICADOR': r'\b[a-zA-Z][a-zA-Z0-9]{0,14}\b',
@@ -18,97 +16,95 @@ TOKENS = {
 
 token_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in TOKENS.items())
 
+# -------------------- Analizador Léxico --------------------
 def analizador_lexico(codigo_fuente):
     tokens_encontrados = []
     tabla_simbolos = {}
+    errores_lexicos = []
+
     identificador_id = 1
     constante_id = 1
 
-    for match in re.finditer(token_regex, codigo_fuente):
-        tipo_token = match.lastgroup
-        valor_token = match.group(tipo_token)
-        tokens_encontrados.append((tipo_token, valor_token))
+    pos = 0
+    while pos < len(codigo_fuente):
+        match = re.match(token_regex, codigo_fuente[pos:])
+        if match:
+            tipo_token = match.lastgroup
+            valor_token = match.group(tipo_token)
+            tokens_encontrados.append((tipo_token, valor_token))
 
-        if tipo_token == "IDENTIFICADOR":
-            if valor_token not in tabla_simbolos:
-                tabla_simbolos[valor_token] = {"ID": identificador_id, "Tipo": "Identificador"}
-                identificador_id += 1
-        elif tipo_token == "CONSTANTE_ENTERA":
-            if valor_token not in tabla_simbolos:
-                tabla_simbolos[valor_token] = {"ID": constante_id, "Tipo": "Constante"}
-                constante_id += 1
+            if tipo_token == "IDENTIFICADOR":
+                if valor_token not in tabla_simbolos:
+                    tabla_simbolos[valor_token] = {"ID": identificador_id, "Tipo": "Identificador"}
+                    identificador_id += 1
+            elif tipo_token == "CONSTANTE_ENTERA":
+                if valor_token not in tabla_simbolos:
+                    tabla_simbolos[valor_token] = {"ID": constante_id, "Tipo": "Constante"}
+                    constante_id += 1
 
-    return tokens_encontrados, tabla_simbolos
+            pos += len(valor_token)
+        else:
+            error_char = codigo_fuente[pos]
+            errores_lexicos.append((error_char, pos))
+            pos += 1
 
-# -----------------------
-# GRAMÁTICA BNF CORREGIDA PARA LARK
-# -----------------------
+    return tokens_encontrados, tabla_simbolos, errores_lexicos
 
-bnf_grammar = """
-    start: instruccion+
+# -------------------- Gramática BNF --------------------
+bnf_grammar = r"""
+    start: stmt+
 
-    instruccion: condicional
-               | asignacion
-               | impresion
+    stmt: "if" expr "then" stmt
+        | "for" IDENTIFICADOR ":=" expr ";" stmt
+        | "print" "(" expr ")" ";"
+        | IDENTIFICADOR ":=" expr ";"
+        | "{" stmt+ "}"
 
-    condicional: "if" expresion "then" instruccion ("else" instruccion)?
-    asignacion: IDENTIFICADOR ":=" expresion ";"
-    impresion: "print" "(" expresion ")" ";"
-
-    expresion: termino ((OP_ARIT) termino)*
-    termino: IDENTIFICADOR | CONSTANTE_ENTERA
-
-    expresion: lista
-                | termino ((OP_ARIT) termino)*
-
-    lista: "[" [expresion ("," expresion)*] "]"
-
-
-    IDENTIFICADOR: /[a-zA-Z][a-zA-Z0-9]{0,14}/
-    CONSTANTE_ENTERA: /(100|[0-9]{1,2})/
-    OP_ARIT: /[+\\-*/]/
+    expr: term (("+"|"-") term)*
+    term: factor (("*"|"/") factor)*
+    factor: CONSTANTE_ENTERA | IDENTIFICADOR | "(" expr ")"
 
     %import common.WS
     %ignore WS
 
+    CONSTANTE_ENTERA: /\b(100|[0-9]{1,2})\b/
+    IDENTIFICADOR: /\b[a-zA-Z][a-zA-Z0-9]{0,14}\b/
 """
-
-# -----------------------
-# PARSER CON LARK
-# -----------------------
 
 parser = Lark(bnf_grammar, start='start')
 
-class ArbolTransformer(Transformer):
-    def instruccion(self, items):
-        return Tree("instruccion", items)
-    def asignacion(self, items):
-        return Tree("asignacion", items)
-    def impresion(self, items):
-        return Tree("impresion", items)
-    def condicional(self, items):
-        return Tree("condicional", items)
+# -------------------- Código de prueba --------------------
+codigo_prueba = 'if x := 10 then print(x + 5); y := 3a;'  # contiene error léxico ("3a")
 
-# -----------------------
-# PRUEBA
-# -----------------------
+# -------------------- Ejecución del Análisis --------------------
+tokens, tabla_simbolos, errores_lexicos = analizador_lexico(codigo_prueba)
 
-codigo_prueba = "if x := 10 then print(x + 5);"
-
-tokens, tabla_simbolos = analizador_lexico(codigo_prueba)
-
-print("\nTokens detectados:")
+# Mostrar tokens
+print("\n Tokens detectados:")
 for tipo, valor in tokens:
-    print(f"{tipo}: {valor}")
+    print(f"{tipo:20}: {valor}")
 
-print("\nTabla de Símbolos:")
+# Mostrar tabla de símbolos
+print("\n Tabla de Símbolos:")
 for simbolo, info in tabla_simbolos.items():
     print(f"{info['ID']}: {simbolo} -> {info['Tipo']}")
 
-print("\nÁrbol de derivación:")
+# Mostrar errores léxicos
+if errores_lexicos:
+    print("\n Errores Léxicos:")
+    for char, pos in errores_lexicos:
+        print(f"Carácter inesperado '{char}' en posición {pos}")
+else:
+    print("\n Sin errores léxicos.")
+
+# Análisis sintáctico y árbol de derivación
 try:
-    arbol = parser.parse(codigo_prueba)
-    arbol.transform(ArbolTransformer())
-    print(arbol.pretty())
-except Exception as e:
-    print("Error en el análisis sintáctico:", e)
+    tree = parser.parse(codigo_prueba)
+    print("\n Análisis sintáctico exitoso.")
+    # Guardar imagen del árbol (opcional)
+    pydot__tree_to_png(tree, "arbol_derivacion.png")
+    print(" Árbol de derivación guardado como 'arbol_derivacion.png'")
+except UnexpectedInput as e:
+    print("\n Error sintáctico detectado:")
+    print(f"Descripción: {str(e)}")
+    print(f"Línea {e.line}, columna {e.column}")
